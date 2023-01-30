@@ -1,7 +1,8 @@
 # Main binary configuration
 CMD ?= main
-MAIN_GO_FILE ?= src/$(CMD).go
+MAIN_GO_FILE ?= cmd/$(CMD).go
 GOOS ?= linux
+GOARCH ?= amd64
 
 # Container image creation creation
 VERSION ?= latest
@@ -16,6 +17,8 @@ LOCAL_GENERATOR_IMAGE ?= ebpf-generator:latest
 LOCAL_E2E_TEST_IMAGE ?= localhost/ebpf-agent:test
 
 OCI_BIN ?= docker
+OCI_ARGS ?= --platform linux/amd64
+
 GOLANGCI_LINT_VERSION = v1.50.1
 
 # BPF code generator dependencies
@@ -49,24 +52,28 @@ generate: prereqs
 	@echo "### Generating BPF Go bindings"
 	go generate ./pkg/...
 
+.PHONY: docker-generator-build
+docker-generator-build:
+	@echo "### Creating the container that generates the eBPF binaries"
+	$(OCI_BIN) buildx build $(OCI_ARGS) . -f scripts/generators.Dockerfile -t $(LOCAL_GENERATOR_IMAGE)
+
 .PHONY: docker-generate
 docker-generate:
-	@echo "### Creating the container that generates the eBPF binaries"
-	$(OCI_BIN) build . -f scripts/generators.Dockerfile -t $(LOCAL_GENERATOR_IMAGE)
-	$(OCI_BIN) run --rm -v $(shell pwd):/src $(LOCAL_GENERATOR_IMAGE)
+	$(OCI_BIN) run $(OCI_ARGS) --rm -v $(shell pwd):/src $(LOCAL_GENERATOR_IMAGE)
 
 .PHONY: build
-build: prereqs lint test vendors compile
+build: prereqs lint test compile
 
 .PHONY: compile
 compile:
 	@echo "### Compiling project"
-	GOOS=$(GOOS) go build -ldflags -mod vendor -a -o bin/$(CMD) $(MAIN_GO_FILE)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod vendor -ldflags -a -o bin/$(CMD) $(MAIN_GO_FILE)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod vendor -ldflags -a -o bin/server cmd/test/server/server.go
 
 .PHONY: test
 test:
 	@echo "### Testing code"
-	GOOS=$(GOOS) go test -mod vendor -a ./... -coverpkg=./... -coverprofile cover.all.out
+	go test -mod vendor -a ./... -coverpkg=./... -coverprofile cover.all.out
 
 .PHONY: cov-exclude-generated
 cov-exclude-generated:
@@ -90,12 +97,3 @@ image-build: ## Build OCI image with the manager.
 image-push: ## Push OCI image with the manager.
 	$(OCI_BIN) push ${IMG}
 
-.PHONY: tests-e2e
-.ONESHELL:
-tests-e2e: prereqs
-	go clean -testcache
-	# making the local agent image available to kind in two ways, so it will work in different
-	# environments: (1) as image tagged in the local repository (2) as image archive.
-	$(OCI_BIN) build . -t $(LOCAL_E2E_TEST_IMAGE)
-	$(OCI_BIN) save -o ebpf-agent.tar $(LOCAL_E2E_TEST_IMAGE)
-	GOOS=$(GOOS) go test -p 1 -timeout 30m -v -mod vendor -tags e2e ./e2e/...

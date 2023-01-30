@@ -5,5 +5,7 @@
   IndentWidth: 4,
   SortIncludes: false,
   ReflowComments: false,
+  BinPackArguments: false,
+  BinPackParameters: false,
   TabWidth: 4,
 }
