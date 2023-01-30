@@ -2,6 +2,9 @@ FROM fedora:35
 
 ARG GOVERSION="1.19.5"
 
+ARG ARCH="amd64"
+RUN echo "using ARCH: $ARCH"
+
 # Installs dependencies that are required to compile eBPF programs
 RUN dnf install -y kernel-devel make llvm clang glibc-devel.i686 unzip
 RUN dnf clean all
@@ -11,7 +14,7 @@ VOLUME ["/src"]
 WORKDIR /
 
 # Installs a fairly modern distribution of Go
-RUN curl -qL https://go.dev/dl/go$GOVERSION.linux-amd64.tar.gz -o go.tar.gz
+RUN curl -qL https://go.dev/dl/go$GOVERSION.linux-$ARCH.tar.gz -o go.tar.gz
 RUN tar -xzf go.tar.gz
 RUN rm go.tar.gz
 

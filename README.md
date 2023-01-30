@@ -23,4 +23,4 @@ dnf install -y kernel-devel make llvm clang glibc-devel.i686
 make generate
 ```
 
-Tested in Fedora 35 and Red Hat Enterprise Linux 8.
+Tested in Fedora 35, 38 and Red Hat Enterprise Linux 8.

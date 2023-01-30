@@ -77,14 +77,14 @@ const u8 ip4in6[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
 
 // sets the TCP header flags for connection information
 static inline void set_flags(struct tcphdr *th, u16 *flags) {
-    //If both ACK and SYN are set, then it is server -> client communication during 3-way handshake. 
+    //If both ACK and SYN are set, then it is server -> client communication during 3-way handshake.
     if (th->ack && th->syn) {
         *flags |= SYN_ACK_FLAG;
-    } else if (th->ack && th->fin ) {
+    } else if (th->ack && th->fin) {
         // If both ACK and FIN are set, then it is graceful termination from server.
         *flags |= FIN_ACK_FLAG;
-    } else if (th->ack && th->rst ) {
-        // If both ACK and RST are set, then it is abrupt connection termination. 
+    } else if (th->ack && th->rst) {
+        // If both ACK and RST are set, then it is abrupt connection termination.
         *flags |= RST_ACK_FLAG;
     } else if (th->fin) {
         *flags |= FIN_FLAG;
@@ -243,7 +243,7 @@ static inline int flow_monitor(struct __sk_buff *skb, u8 direction) {
             .bytes = skb->len,
             .start_mono_time_ts = current_time,
             .end_mono_time_ts = current_time,
-            .flags = flags, 
+            .flags = flags,
         };
 
         // even if we know that the entry is new, another CPU might be concurrently inserting a flow
