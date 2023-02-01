@@ -14,7 +14,7 @@ import (
 )
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS -type sock_info bpf ../../bpf/probes.c -- -I../../bpf/headers
+//go:generate bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64 -type sock_info bpf ../../bpf/probes.c -- -I../../bpf/headers
 
 const mapKey uint32 = 0
 
@@ -43,7 +43,8 @@ func Trace() {
 	defer objs.Close()
 
 	log.Println("registering tracepoint")
-	kp, err := link.Tracepoint("syscalls", "sys_enter_accept4", objs.SysEnterAccept4, nil)
+	//kp, err := link.Tracepoint("syscalls", "sys_enter_accept4", objs.SysEnterAccept4, nil)
+	kp, err := link.Kprobe("tcp_data_queue", objs.TcpV4Rcv, nil)
 	if err != nil {
 		log.Fatalf("opening tracepoint: %s", err)
 	}

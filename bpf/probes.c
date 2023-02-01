@@ -15,11 +15,10 @@
 */
 
 
-#include <sys/socket.h>
-
-#include <common.h>
+#include "vmlinux.h"
 #include <bpf_helpers.h>
 #include <bpf_endian.h>
+#include <bpf_tracing.h>
 
 #include "probes.h"
 
@@ -31,7 +30,8 @@ struct {
 typedef struct sock_info_t {
     s64 syscall_nr;
     s64 fd;
-    struct sockaddr upeer_sockaddr;
+    u64 sockaddr_ptr;
+    //struct sockaddr upeer_sockaddr;
     s64 upeer_addrlen;
     s64 flags;
 } __attribute__((packed)) sock_info;
@@ -58,7 +58,23 @@ struct accept4_args {
     struct sockaddr *upeer_sockaddr;
     s64 *upeer_addrlen;
     s64 flags;
-};
+} __attribute__((packed));
+
+
+SEC("kprobe/tcp_data_queue")
+int tcp_v4_rcv(struct pt_regs *ctx) {
+    struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM2(ctx);
+    u16 rip;
+    long err = bpf_probe_read(&rip, sizeof(u16), &skb->inner_ipproto);
+    if (err != 0) {
+        bpf_printk("error skb: %ld", err);
+    } else {
+        bpf_printk("receiving tracatraca: %lx %lx", ctx, rip);
+    }
+
+    return 0;
+}
+
 
 SEC("tracepoint/syscalls/sys_enter_accept4")
 int sys_enter_accept4(struct accept4_args *args) {
@@ -73,7 +89,7 @@ int sys_enter_accept4(struct accept4_args *args) {
     iad->fd = args->fd;
     iad->flags = args->flags;
 
-    long err = bpf_probe_read(&iad->upeer_sockaddr, sizeof(struct sockaddr), &args->upeer_sockaddr);
+    long err = bpf_probe_read(&iad->sockaddr_ptr, sizeof(u64), &args->upeer_sockaddr);
     if (err != 0) {
         bpf_printk("error reading sa_data: %ld", err);
     }
@@ -83,7 +99,7 @@ int sys_enter_accept4(struct accept4_args *args) {
     //     bpf_printk("error reading sadata: %ld", err);
     // }
 
-    err = bpf_probe_read_kernel(&iad->upeer_addrlen, sizeof(s64), &args->upeer_addrlen);
+    err = bpf_probe_read_kernel(&iad->upeer_addrlen, sizeof(s32), &args->upeer_addrlen);
     if (err != 0) {
         bpf_printk("error reading addrlen: %ld", err);
     }
