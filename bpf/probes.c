@@ -27,41 +27,8 @@ struct {
     __uint(max_entries, 1 << 24);
 } connections SEC(".maps");
 
-typedef struct sock_info_t {
-    s64 syscall_nr;
-    s64 fd;
-    u64 sockaddr_ptr;
-    //struct sockaddr upeer_sockaddr;
-    s64 upeer_addrlen;
-    s64 flags;
-} __attribute__((packed)) sock_info;
-// Force emitting struct sock_info into the ELF.
-const sock_info *unused __attribute__((unused));
-
-// Structure according to cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_accept4/format
-// More info at: https://stackoverflow.com/questions/75300106/ebpf-verifier-r1-is-not-a-scalar/75302692#75302692
-// field:unsigned short common_type;	offset:0;	size:2;	signed:0;
-// field:unsigned char common_flags;	offset:2;	size:1;	signed:0;
-// field:unsigned char common_preempt_count;	offset:3;	size:1;	signed:0;
-// field:int common_pid;	offset:4;	size:4;	signed:1;
-
-// field:int __syscall_nr;	offset:8;	size:4;	signed:1;
-// field:int fd;	offset:16;	size:8;	signed:0;
-// field:struct sockaddr * upeer_sockaddr;	offset:24;	size:8;	signed:0;
-// field:int * upeer_addrlen;	offset:32;	size:8;	signed:0;
-// field:int flags;	offset:40;	size:8;	signed:0;
-struct accept4_args {
-    u64 pad;
-
-    s64 __syscall_nr;
-    s64 fd;
-    struct sockaddr *upeer_sockaddr;
-    s64 *upeer_addrlen;
-    s64 flags;
-} __attribute__((packed));
-
-
 // inet_csk: inet connection sock
+/*
 SEC("kretprobe/inet_csk_accept")
 int tcp_v4_rcv(struct pt_regs *ctx) {
     bpf_printk("entering inet_csk_accept");
@@ -70,8 +37,8 @@ int tcp_v4_rcv(struct pt_regs *ctx) {
     // TODO: check if there is any way to get this platform-independently (so we can avoid -target x86 in the bpf2go)
     struct sock *sk =(struct sock *)PT_REGS_RC(ctx); // also: (struct sock*)(ctx->ax);
     if (sk == NULL) return 0;
-    u16 rip = sk->__sk_common.skc_num;
-    //err = bpf_probe_read_kernel(&rip, sizeof(u16), &);
+
+    err = bpf_probe_read_kernel(&rip, sizeof(u16), &sk->__sk_common.skc_num);
     if (err != 0) {
         bpf_printk("error skb: %ld", err);
     } else {
@@ -80,37 +47,53 @@ int tcp_v4_rcv(struct pt_regs *ctx) {
 
     return 0;
 }
+*/
 
+// Structure according to cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
+// More info at: https://stackoverflow.com/questions/75300106/ebpf-verifier-r1-is-not-a-scalar/75302692#75302692
+struct set_state_args {
+    u64 pad;
 
-SEC("tracepoint/syscalls/sys_enter_accept4")
-int sys_enter_accept4(struct accept4_args *args) {
-    sock_info *iad = bpf_ringbuf_reserve(&connections, sizeof(sock_info), 0);
-    if (!iad) {
+    const void * skaddr;
+    int oldstate;
+    int newstate;
+    __u16 sport;
+    __u16 dport;
+    __u16 family;
+    __u16 protocol;
+    __u8 saddr[4];
+    __u8 daddr[4];
+    __u8 saddr_v6[16];
+    __u8 daddr_v6[16];
+} __attribute__((packed));
+
+typedef struct state_info_t {
+    int newstate;
+    __u16 sport;
+    __u16 dport;
+    __u16 protocol;
+    __u64 time_ns;
+} __attribute__((packed)) state_info;
+// Force emitting struct sock_info into the ELF.
+const state_info *unused __attribute__((unused));
+
+SEC("tracepoint/sock/inet_sock_set_state")
+int inet_sock_set_state(struct set_state_args *args) {
+    u64 current_time = bpf_ktime_get_ns();
+    state_info *info = bpf_ringbuf_reserve(&connections, sizeof(state_info), 0);
+    if (!info) {
         bpf_printk("can't reserve ringbuf space");
         return 0;
     }
     // https://man7.org/linux/man-pages/man7/bpf-helpers.7.html
 
-    iad->syscall_nr = args->__syscall_nr;
-    iad->fd = args->fd;
-    iad->flags = args->flags;
+    info->dport = args->dport; // Destination port is big endian, it must be flipped in x86
+    info->sport = args->sport;
+    info->protocol = args->protocol;
+    info->newstate = args->newstate;
+    info->time_ns = current_time;
 
-    long err = bpf_probe_read(&iad->sockaddr_ptr, sizeof(u64), &args->upeer_sockaddr);
-    if (err != 0) {
-        bpf_printk("error reading sa_data: %ld", err);
-    }
-
-    // err = bpf_probe_read(&iad->sadata, sizeof(iad->sadata), args->upeer_sockaddr->sa_data);
-    // if (err != 0) {
-    //     bpf_printk("error reading sadata: %ld", err);
-    // }
-
-    err = bpf_probe_read_kernel(&iad->upeer_addrlen, sizeof(s32), &args->upeer_addrlen);
-    if (err != 0) {
-        bpf_printk("error reading addrlen: %ld", err);
-    }
-
-    bpf_ringbuf_submit(iad, 0);
+    bpf_ringbuf_submit(info, 0);
     return 0;
 }
 char _license[] SEC("license") = "GPL";

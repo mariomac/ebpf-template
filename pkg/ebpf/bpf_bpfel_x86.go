@@ -13,12 +13,12 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type bpfSockInfo struct {
-	SyscallNr    int64
-	Fd           int64
-	SockaddrPtr  uint64
-	UpeerAddrlen int64
-	Flags        int64
+type bpfStateInfo struct {
+	Newstate int32
+	Sport    uint16
+	Dport    uint16
+	Protocol uint16
+	TimeNs   uint64
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.
@@ -62,8 +62,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
-	SysEnterAccept4 *ebpf.ProgramSpec `ebpf:"sys_enter_accept4"`
-	TcpV4Rcv        *ebpf.ProgramSpec `ebpf:"tcp_v4_rcv"`
+	InetSockSetState *ebpf.ProgramSpec `ebpf:"inet_sock_set_state"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -105,14 +104,12 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
-	SysEnterAccept4 *ebpf.Program `ebpf:"sys_enter_accept4"`
-	TcpV4Rcv        *ebpf.Program `ebpf:"tcp_v4_rcv"`
+	InetSockSetState *ebpf.Program `ebpf:"inet_sock_set_state"`
 }
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
-		p.SysEnterAccept4,
-		p.TcpV4Rcv,
+		p.InetSockSetState,
 	)
 }
 

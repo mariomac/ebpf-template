@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"strings"
+
+	"golang.org/x/exp/slog"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -14,87 +16,95 @@ import (
 )
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64 -type sock_info bpf ../../bpf/probes.c -- -I../../bpf/headers
+//go:generate bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64 -type state_info bpf ../../bpf/probes.c -- -I../../bpf/headers
 
-const mapKey uint32 = 0
+var log = slog.With(
+	slog.String("component", "ebpf.Tracer"),
+)
 
-func Trace() {
+type tracer struct {
+	bpfObjects bpfObjects
+	tracepoint link.Link
+}
+
+func (t *tracer) register() error {
 	// Allow the current process to lock memory for eBPF resources.
-	log.Println("start tracer")
+	log.Debug("Registering eBPF tracer")
 	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("removing mem lock: %w", err)
 	}
 
 	// Load pre-compiled programs and maps into the kernel.
-	log.Println("load BPF object")
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	log.Debug("loading BPF objects")
+	if err := loadBpfObjects(&t.bpfObjects, nil); err != nil {
 		verr := &ebpf.VerifierError{}
 		if !errors.As(err, &verr) {
-			log.Fatal("loading objects", err)
+			return fmt.Errorf("loading BPF objects: %w", err)
 		}
-		log.Println("cause", verr.Cause)
-		for _, l := range verr.Log {
-			fmt.Println(l)
+		return fmt.Errorf("loading BPF objects: %w, %s", err, strings.Join(verr.Log, "\n"))
+	}
+
+	log.Debug("registering tracepoint")
+	kp, err := link.Tracepoint("sock", "inet_sock_set_state", t.bpfObjects.InetSockSetState, nil)
+	//kp, err := link.Kretprobe("inet_csk_accept", objs.TcpV4Rcv, nil)
+	if err != nil {
+		return fmt.Errorf("registering tracepoint: %w", err)
+	}
+	t.tracepoint = kp
+	return nil
+}
+
+func (t *tracer) Close() error {
+	var errs []string
+	if t.tracepoint != nil {
+		if err := t.tracepoint.Close(); err != nil {
+			errs = append(errs, err.Error())
 		}
-		log.Fatal("loading objects", verr)
-		return
 	}
-	defer objs.Close()
+	if err := t.bpfObjects.Close(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("closing BPF resources: '%s'", strings.Join(errs, "', '"))
+	}
+	return nil
+}
 
-	log.Println("registering tracepoint")
-	//kp, err := link.Tracepoint("syscalls", "sys_enter_accept4", objs.SysEnterAccept4, nil)
-	kp, err := link.Kretprobe("inet_csk_accept", objs.TcpV4Rcv, nil)
+type SockStateInfo bpfStateInfo
+
+func Trace() (func(out chan<- SockStateInfo), error) {
+	t := tracer{}
+	if err := t.register(); err != nil {
+		return nil, fmt.Errorf("registering eBPF tracer: %w", err)
+	}
+	slog.Debug("creating ringbuf reader")
+	rd, err := ringbuf.NewReader(t.bpfObjects.Connections)
 	if err != nil {
-		log.Fatalf("opening tracepoint: %s", err)
+		_ = t.Close()
+		return nil, fmt.Errorf("creating ringbuf reader: %w", err)
 	}
-	defer kp.Close()
-
-	// Open a ringbuf reader from userspace RINGBUF map described in the
-	// eBPF C program.
-	rd, err := ringbuf.NewReader(objs.Connections)
-	if err != nil {
-		log.Fatalf("opening ringbuf reader: %s", err)
-	}
-	defer rd.Close()
-
-	log.Println("Waiting for events..")
-
-	var conn bpfSockInfo
-	for {
-		record, err := rd.Read()
-		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				log.Println("Received signal, exiting..")
-				return
+	return func(out chan<- SockStateInfo) {
+		defer t.Close()
+		var conn SockStateInfo
+		// TODO: set proper context-based cancellation
+		for {
+			record, err := rd.Read()
+			if err != nil {
+				if errors.Is(err, ringbuf.ErrClosed) {
+					log.Debug("Received signal, exiting..")
+					return
+				}
+				log.Error("reading from ringbuf", err)
+				continue
 			}
-			log.Printf("reading from reader: %s", err)
-			continue
+
+			// Parse the ringbuf event entry into a bpfEvent structure.
+			// TODO: detect endianness
+			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &conn); err != nil {
+				log.Error("parsing ringbuf event", err)
+				continue
+			}
+			out <- conn
 		}
-
-		// Parse the ringbuf event entry into a bpfEvent structure.
-		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &conn); err != nil {
-			log.Printf("parsing ringbuf event: %s", err)
-			continue
-		}
-		log.Printf("%#v", conn)
-
-		buf := bytes.Buffer{}
-		binary.Write(&buf, binary.LittleEndian, conn)
-
-		ibuf := make([]byte, buf.Len())
-		for i, b := range buf.Bytes() {
-			ibuf[len(ibuf)-i-1] = b
-		}
-
-		//binary.Read(bytes.NewReader(ibuf), binary.BigEndian, &conn)
-		//log.Printf("invert: %#v", conn)
-
-		//log.Printf("%d.%d.%d.%d",
-		//	conn.SaData[0],
-		//	conn.SaData[1],
-		//	conn.SaData[2],
-		//	conn.SaData[3])
-
-	}
+	}, nil
 }
