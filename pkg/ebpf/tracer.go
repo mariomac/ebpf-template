@@ -44,7 +44,7 @@ func Trace() {
 
 	log.Println("registering tracepoint")
 	//kp, err := link.Tracepoint("syscalls", "sys_enter_accept4", objs.SysEnterAccept4, nil)
-	kp, err := link.Kprobe("tcp_data_queue", objs.TcpV4Rcv, nil)
+	kp, err := link.Kretprobe("inet_csk_accept", objs.TcpV4Rcv, nil)
 	if err != nil {
 		log.Fatalf("opening tracepoint: %s", err)
 	}

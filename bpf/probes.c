@@ -61,11 +61,17 @@ struct accept4_args {
 } __attribute__((packed));
 
 
-SEC("kprobe/tcp_data_queue")
+// inet_csk: inet connection sock
+SEC("kretprobe/inet_csk_accept")
 int tcp_v4_rcv(struct pt_regs *ctx) {
-    struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM2(ctx);
-    u16 rip;
-    long err = bpf_probe_read(&rip, sizeof(u16), &skb->inner_ipproto);
+    bpf_printk("entering inet_csk_accept");
+    long err = 0;
+    
+    // TODO: check if there is any way to get this platform-independently (so we can avoid -target x86 in the bpf2go)
+    struct sock *sk =(struct sock *)PT_REGS_RC(ctx); // also: (struct sock*)(ctx->ax);
+    if (sk == NULL) return 0;
+    u16 rip = sk->__sk_common.skc_num;
+    //err = bpf_probe_read_kernel(&rip, sizeof(u16), &);
     if (err != 0) {
         bpf_printk("error skb: %ld", err);
     } else {
