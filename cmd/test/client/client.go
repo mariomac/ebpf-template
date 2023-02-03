@@ -27,6 +27,8 @@ func main() {
 	if ps, ok := os.LookupEnv(envServerURL); ok {
 		serverURL = ps
 	}
+	http.DefaultTransport.(*http.Transport).DisableKeepAlives = true
+
 	for {
 		doPing(serverURL, "")
 		time.Sleep(sleepTime)
