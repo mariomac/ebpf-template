@@ -16,4 +16,4 @@ vendor/
 
 .idea
 bin/*
-
+.vscode
