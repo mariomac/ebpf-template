@@ -31,7 +31,7 @@ func (t *tracer) register() error {
 	// Allow the current process to lock memory for eBPF resources.
 	log.Debug("Registering eBPF tracer")
 	if err := rlimit.RemoveMemlock(); err != nil {
-		return fmt.Errorf("removing mem lock: %w", err)
+		log.Warn("removing mem lock", "error", err)
 	}
 
 	// Load pre-compiled programs and maps into the kernel.

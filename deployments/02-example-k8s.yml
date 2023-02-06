@@ -1,0 +1,85 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  labels:
+    app: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      volumes:
+        - name: agent-config
+          configMap:
+            name: agent-config
+      containers:
+        - name: agent
+          image: grafana/agent:main
+          command:
+            - "/usr/bin/agent"
+            - "--config.file=/agent-config/agent-config.yml"
+            - "-server.http.address=127.0.0.1:9090"
+            - "-server.grpc.address=127.0.0.1:9091"
+          ports:
+            - containerPort: 4318
+              protocol: TCP
+              name: http-traces
+          volumeMounts:
+            - mountPath: /agent-config
+              readOnly: true
+              name: agent-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+spec:
+  selector:
+    app: agent
+  ports:
+    - port: 4318
+      protocol: TCP
+      targetPort: http-traces
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tracer
+  labels:
+    app: tracer
+spec:
+  selector:
+    matchLabels:
+      app: tracer
+  template:
+    metadata:
+      labels:
+        app: tracer
+    spec:
+#      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      volumes:
+        - name: tracing
+          hostPath:
+            path: /sys/kernel/debug
+      containers:
+        - name: tracer
+          image: mariomac/ebpf-template:latest
+          #imagePullPolicy: Always
+          securityContext:
+            runAsUser: 0
+            privileged: true # TODO: change by individual capabilities
+          volumeMounts:
+            - mountPath: /sys/kernel/debug
+              name: tracing
+          env:
+            - name: OTEL_TRACES_ENDPOINT
+              value: "agent:4318"

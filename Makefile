@@ -4,10 +4,12 @@ MAIN_GO_FILE ?= cmd/$(CMD).go
 GOOS ?= linux
 GOARCH ?= amd64
 
+DOCKERHUB_USER ?= $(USER)
+
 # Container image creation creation
 VERSION ?= latest
-IMAGE_TAG_BASE ?= ebpf-template
-IMG ?= $(IMAGE_TAG_BASE):$(SW_VERSION)
+IMAGE_TAG_BASE ?= $(DOCKERHUB_USER)/ebpf-template
+IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
 # The generator is a local container image that provides a reproducible environment for
 # building eBPF binaries
@@ -17,7 +19,6 @@ LOCAL_GENERATOR_IMAGE ?= ebpf-generator:latest
 LOCAL_E2E_TEST_IMAGE ?= localhost/ebpf-agent:test
 
 OCI_BIN ?= docker
-OCI_ARGS ?= --platform linux/amd64
 
 GOLANGCI_LINT_VERSION = v1.50.1
 
@@ -55,11 +56,11 @@ generate: prereqs
 .PHONY: docker-generator-build
 docker-generator-build:
 	@echo "### Creating the container that generates the eBPF binaries"
-	$(OCI_BIN) buildx build $(OCI_ARGS) . -f scripts/generators.Dockerfile -t $(LOCAL_GENERATOR_IMAGE)
+	$(OCI_BIN) buildx build . -f scripts/generators.Dockerfile -t $(LOCAL_GENERATOR_IMAGE)
 
 .PHONY: docker-generate
 docker-generate:
-	$(OCI_BIN) run $(OCI_ARGS) --rm -v $(shell pwd):/src $(LOCAL_GENERATOR_IMAGE)
+	$(OCI_BIN) run --rm -v $(shell pwd):/src $(LOCAL_GENERATOR_IMAGE)
 
 .PHONY: build
 build: prereqs lint test compile
@@ -68,7 +69,6 @@ build: prereqs lint test compile
 compile:
 	@echo "### Compiling project"
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod vendor -ldflags -a -o bin/$(CMD) $(MAIN_GO_FILE)
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -mod vendor -ldflags -a -o bin/server cmd/test/server/server.go
 
 .PHONY: test
 test:
@@ -89,9 +89,9 @@ coverage-report-html: cov-exclude-generated
 	@echo "### Generating HTML coverage report"
 	go tool cover --html=./cover.out
 
-.PHONY: image-build
-image-build: ## Build OCI image with the manager.
-	$(OCI_BIN) build -t ${IMG} .
+.PHONY: image-build-push
+image-build-push: ## Build OCI image with the manager.
+	$(OCI_BIN) buildx build --push --platform linux/amd64,linux/arm64 -t ${IMG} .
 
 .PHONY: image-push
 image-push: ## Push OCI image with the manager.

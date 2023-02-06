@@ -94,6 +94,19 @@ Then arguments can be accessed as:
 
 To make use of `PT_REGS_PARM1` and so on, the bpf2go has now to be compiled with -target amd64 or arm64
 
+## Simpler alternative
+
+```
+SEC("kprobe/inet_csk_accept")
+int BPF_KPROBE(inet_csk_accept,
+    struct sock *sk,
+    int flags,
+    int *err,
+    bool kern) {
+```
+
+However this doesn't allow more than 6 arguments. It still forces you using
+`bpf_probe_read` for e.g. sk.
 
 ## Debugging
 

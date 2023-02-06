@@ -17,3 +17,5 @@ vendor/
 .idea
 bin/*
 .vscode
+
+deployments/01-example-k8s-agentconfig.yml

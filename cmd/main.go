@@ -11,7 +11,16 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+const (
+	envEndpoint = "OTEL_TRACES_ENDPOINT"
+)
+
 func main() {
+	tracesEndpoint, ok := os.LookupEnv(envEndpoint)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "missing "+envEndpoint)
+		os.Exit(-1)
+	}
 	ho := slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}
@@ -27,7 +36,7 @@ func main() {
 			fmt.Printf("connection %s long: %#v\n", span.End.Sub(span.Start), span)
 		}
 	})
-	report, err := otel.Report("localhost:4318")
+	report, err := otel.Report(tracesEndpoint)
 	if err != nil {
 		panic(err)
 	}
