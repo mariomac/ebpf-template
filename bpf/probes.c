@@ -5,34 +5,27 @@
 
 #include "probes.h"
 
+// The ringbuffer is used to forward messages directly to the user space (Go program)
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 24);
 } connections SEC(".maps");
 
-// inet_csk: inet connection sock
-/*
-SEC("kretprobe/inet_csk_accept")
-int tcp_v4_rcv(struct pt_regs *ctx) {
-    bpf_printk("entering inet_csk_accept");
-    long err = 0;
-    
-    // TODO: check if there is any way to get this platform-independently (so we can avoid -target x86 in the bpf2go)
-    struct sock *sk =(struct sock *)PT_REGS_RC(ctx); // also: (struct sock*)(ctx->ax);
-    if (sk == NULL) return 0;
+// The data in this struct provides information that is going to be sent to the user space
+// via the above ringbuffer.
+// The Cilium bpf2go tool will generate a binary-compatible Go clone in pkg/ebpf/bpf_bpfel.go:16
+typedef struct state_info_t {
+    int newstate;
+    __u16 sport;
+    __u16 dport;
+    __u16 protocol;
+    __u64 time_ns;
+} __attribute__((packed)) state_info;
+// Force emitting struct sock_info into the ELF.
+const state_info *unused __attribute__((unused));
 
-    err = bpf_probe_read_kernel(&rip, sizeof(u16), &sk->__sk_common.skc_num);
-    if (err != 0) {
-        bpf_printk("error skb: %ld", err);
-    } else {
-        bpf_printk("receiving tracatraca: %lx %lx", ctx, rip);
-    }
-
-    return 0;
-}
-*/
-
-// Structure according to cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
+// This structure contains the arguments of the tracepoint below.
+// Its structure must be taken from /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
 // More info at: https://stackoverflow.com/questions/75300106/ebpf-verifier-r1-is-not-a-scalar/75302692#75302692
 struct set_state_args {
     u64 pad;
@@ -50,16 +43,9 @@ struct set_state_args {
     __u8 daddr_v6[16];
 } __attribute__((packed));
 
-typedef struct state_info_t {
-    int newstate;
-    __u16 sport;
-    __u16 dport;
-    __u16 protocol;
-    __u64 time_ns;
-} __attribute__((packed)) state_info;
-// Force emitting struct sock_info into the ELF.
-const state_info *unused __attribute__((unused));
-
+// The actual code that is going to be executed each time the inet_sock_set_state tracepoint is
+// triggered. It parses the connection information from the argument and forwards it to the user
+// space via ring buffer
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(struct set_state_args *args) {
     u64 current_time = bpf_ktime_get_ns();
